@@ -73,16 +73,20 @@ async def adaptive_streamer(
         if is_sse_enabled:
             chat_prefix, chat_suffix = STREAM_PREFIX, STREAM_SUFFIX
         else:
-            chat_prefix, chat_suffix = '', ''
+            chat_prefix, chat_suffix = "", ""
             yield NON_STREAM_PREFIX
 
         async for partial in poe_bot_stream_partials_generator:
             try:
                 # logger.info("Processing partial data: %s", partial)
-                yield chat_prefix
                 json_partial = json.dumps(partial)
-                yield json_partial.strip('"')
-                yield chat_suffix
+                if is_sse_enabled:
+                    yield chat_prefix
+                    yield json_partial
+                    yield chat_suffix
+                else:
+                    # 非流式模式下，简单拼接部分数据
+                    yield json_partial[1:-1]
             except asyncio.CancelledError:
                 logger.warning("Task cancelled due to client disconnect or manual cancellation")
                 return
