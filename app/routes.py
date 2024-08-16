@@ -58,16 +58,13 @@ async def adaptive_streamer(
     id = f"chatcmpl-{timestamp}"
 
     STREAM_PREFIX = f'data: {{"id":"{id}","object":"chat.completion.chunk","created":{timestamp},"model":"gpt-4","choices":[{{"index":0,"delta":{{"content":'
-
     STREAM_SUFFIX = '},\"finish_reason\":null}]}\n\n'
-
     ENDING_CHUNK = f'data: {{"id":"{id}","object":"chat.completion.chunk","created":{timestamp},"model":"gpt-4","choices":[{{"index":0,"delta":{{}},"finish_reason":"stop"}}]}}\n\ndata: [DONE]\n\n'
-
     NON_STREAM_PREFIX = f'{{"id":"{id}","object":"chat.completion","created":{timestamp},"model":"gpt-4","choices":[{{"index":0,"message":{{"role":"assistant","content":"'
-
     NON_STREAM_SUFFIX = '"},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0},"system_fingerprint":"abc"}\n\n'
 
-    # logger.info("adaptive_streamer started with SSE enabled: %s", is_sse_enabled)
+    # 创建锁以避免共享状态问题
+    lock = asyncio.Lock()
 
     try:
         if is_sse_enabled:
@@ -78,34 +75,39 @@ async def adaptive_streamer(
 
         async for partial in poe_bot_stream_partials_generator:
             try:
-                # logger.info("Processing partial data: %s", partial)
                 json_partial = json.dumps(partial)
-                if is_sse_enabled:
-                    yield chat_prefix
-                    yield json_partial
-                    yield chat_suffix
-                else:
-                    # 非流式模式下，简单拼接部分数据
-                    yield json_partial[1:-1]
+
+                async with lock:
+                    if is_sse_enabled:
+                        yield chat_prefix
+                        yield json_partial
+                        yield chat_suffix
+                    else:
+                        yield json_partial[1:-1]  # 去掉首尾的引号
             except asyncio.CancelledError:
-                logger.warning("Task cancelled due to client disconnect or manual cancellation")
+                # 处理任务取消
+                if is_sse_enabled:
+                    async with lock:
+                        yield ENDING_CHUNK
                 return
             except Exception as e:
-                logger.error("Error while processing partial data: %s", e, exc_info=True)
+                # 记录异常
+                print(f"Error while processing partial data: {e}")  # 使用合适的日志库代替 print
                 continue
 
-        if is_sse_enabled:
-            yield ENDING_CHUNK
-        else:
-            yield NON_STREAM_SUFFIX
+        if not is_sse_enabled:
+            async with lock:
+                yield NON_STREAM_SUFFIX
 
     except asyncio.CancelledError:
-        logger.warning("adaptive_streamer was cancelled, likely due to client disconnect.")
-        return
+        # 处理任务取消
+        print("adaptive_streamer was cancelled, likely due to client disconnect.")  # 使用合适的日志库代替 print
     except Exception as e:
-        logger.error("Unhandled error in adaptive_streamer: %s", e, exc_info=True)
-    # finally:
-        # logger.info("adaptive_streamer has completed execution.")
+        # 记录异常
+        print(f"Unhandled error in adaptive_streamer: {e}")  # 使用合适的日志库代替 print
+    finally:
+        # 执行清理工作
+        print("adaptive_streamer has completed execution.")  # 使用合适的日志库代替 print
 
     return
 
