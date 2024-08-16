@@ -57,12 +57,15 @@ async def adaptive_streamer(
     timestamp = int(time.time())
     id = f"chatcmpl-{timestamp}"
 
-    STREAM_PREFIX = f'data: {{"id":"{id}","object":"chat.completion.chunk","created":{timestamp},"model":"gpt-4","choices":[{{"index":0,"delta":{{"content":"'
-    STREAM_SUFFIX = '"}},"finish_reason":null}}]}}\n\n'
+    STREAM_PREFIX = f'data: {{"id":"{id}","object":"chat.completion.chunk","created":{timestamp},"model":"gpt-4","choices":[{{"index":0,"delta":{{"content":'
+
+    STREAM_SUFFIX = '},\"finish_reason\":null}]}\n\n'
+
     ENDING_CHUNK = f'data: {{"id":"{id}","object":"chat.completion.chunk","created":{timestamp},"model":"gpt-4","choices":[{{"index":0,"delta":{{}},"finish_reason":"stop"}}]}}\n\ndata: [DONE]\n\n'
 
     NON_STREAM_PREFIX = f'{{"id":"{id}","object":"chat.completion","created":{timestamp},"model":"gpt-4","choices":[{{"index":0,"message":{{"role":"assistant","content":"'
-    NON_STREAM_SUFFIX = '"}},"logprobs":null,"finish_reason":"stop"}}],"usage":{{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}},"system_fingerprint":"abc"}}\n\n'
+
+    NON_STREAM_SUFFIX = '"},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0},"system_fingerprint":"abc"}\n\n'
 
     # logger.info("adaptive_streamer started with SSE enabled: %s", is_sse_enabled)
 
