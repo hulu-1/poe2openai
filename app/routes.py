@@ -1,17 +1,21 @@
 # Poe Documentation: https://creator.poe.com/docs/server-bots-functional-guides
 # OpenAI Documentation: https://platform.openai.com/docs/api-reference/chat/create
-
+import asyncio
+import json
 # Get Environment Variables
 import os
-import json
 import time
+from typing import Any, AsyncGenerator
 
 from fastapi import APIRouter
 from fastapi import Request, Header
 from fastapi.responses import StreamingResponse
-from typing import Any, AsyncGenerator
-from fastapi_poe.types import ProtocolMessage
 from fastapi_poe.client import get_bot_response
+from fastapi_poe.types import ProtocolMessage
+
+from app.config import configure_logging
+
+logger = configure_logging()
 
 router = APIRouter()
 
@@ -52,35 +56,49 @@ async def adaptive_streamer(
 ) -> AsyncGenerator[str, Any]:
     timestamp = int(time.time())
     id = f"chatcmpl-{timestamp}"
-    STREAM_PREFIX = f'data: {{"id":"{id}","object":"chat.completion.chunk","created":{timestamp},"model":"gpt-4","choices":[{{"index":0,"delta":{{"content":'
 
-    STREAM_SUFFIX = '},\"finish_reason\":null}]}\n\n'
-
+    STREAM_PREFIX = f'data: {{"id":"{id}","object":"chat.completion.chunk","created":{timestamp},"model":"gpt-4","choices":[{{"index":0,"delta":{{"content":"'
+    STREAM_SUFFIX = '"}},"finish_reason":null}}]}}\n\n'
     ENDING_CHUNK = f'data: {{"id":"{id}","object":"chat.completion.chunk","created":{timestamp},"model":"gpt-4","choices":[{{"index":0,"delta":{{}},"finish_reason":"stop"}}]}}\n\ndata: [DONE]\n\n'
 
     NON_STREAM_PREFIX = f'{{"id":"{id}","object":"chat.completion","created":{timestamp},"model":"gpt-4","choices":[{{"index":0,"message":{{"role":"assistant","content":"'
+    NON_STREAM_SUFFIX = '"}},"logprobs":null,"finish_reason":"stop"}}],"usage":{{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}},"system_fingerprint":"abc"}}\n\n'
 
-    NON_STREAM_SUFFIX = '"},"logprobs":null,"finish_reason":"stop"}],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0},"system_fingerprint":"abc"}\n\n'
-    if is_sse_enabled:
-        chat_prefix, chat_suffix = STREAM_PREFIX, STREAM_SUFFIX
-        _json_dumps = lambda data: json.dumps(data)
-    else:
-        chat_prefix, chat_suffix = "", ""
-        _json_dumps = lambda data: json.dumps(data)[1:-1]
-        yield NON_STREAM_PREFIX
+    # logger.info("adaptive_streamer started with SSE enabled: %s", is_sse_enabled)
 
-    async for partial in poe_bot_stream_partials_generator:
-        try:
-            yield chat_prefix
-            yield _json_dumps(partial)
-            yield chat_suffix
-        except:
-            continue
+    try:
+        if is_sse_enabled:
+            chat_prefix, chat_suffix = STREAM_PREFIX, STREAM_SUFFIX
+        else:
+            chat_prefix, chat_suffix = '', ''
+            yield NON_STREAM_PREFIX
 
-    if is_sse_enabled:
-        yield ENDING_CHUNK
-    else:
-        yield NON_STREAM_SUFFIX
+        async for partial in poe_bot_stream_partials_generator:
+            try:
+                # logger.info("Processing partial data: %s", partial)
+                yield chat_prefix
+                json_partial = json.dumps(partial)
+                yield json_partial.strip('"')
+                yield chat_suffix
+            except asyncio.CancelledError:
+                logger.warning("Task cancelled due to client disconnect or manual cancellation")
+                return
+            except Exception as e:
+                logger.error("Error while processing partial data: %s", e, exc_info=True)
+                continue
+
+        if is_sse_enabled:
+            yield ENDING_CHUNK
+        else:
+            yield NON_STREAM_SUFFIX
+
+    except asyncio.CancelledError:
+        logger.warning("adaptive_streamer was cancelled, likely due to client disconnect.")
+        return
+    except Exception as e:
+        logger.error("Unhandled error in adaptive_streamer: %s", e, exc_info=True)
+    # finally:
+        # logger.info("adaptive_streamer has completed execution.")
 
     return
 
@@ -94,7 +112,6 @@ def read_root():
 async def chat_completions(
         request: Request, authorization: str = Header(None)
 ) -> StreamingResponse:
-
     # Assuming the header follows the standard format: "Bearer $API_KEY"
     api_key = authorization.split(" ")[1]
     body = await request.json()
